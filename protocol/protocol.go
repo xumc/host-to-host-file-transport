@@ -14,7 +14,7 @@ const (
     ConstSaveDataLength = 4
 )
  
-// packet implemtns pack logic
+// Packet implemtns pack logic
 func Packet(message []byte) []byte {
     return append(append([]byte(ConstHeader), IntToBytes(len(message))...), message...)
 }
