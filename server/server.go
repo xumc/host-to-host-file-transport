@@ -43,6 +43,7 @@ func Start() {
 func handleRequest(conn net.Conn) {
 	defer conn.Close()
 
+	util.Log(conn.RemoteAddr(), " connected")
 	var file *os.File
 	defer file.Close()
 

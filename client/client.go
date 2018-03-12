@@ -1,14 +1,22 @@
 package client
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"os"
+	"time"
 	"path/filepath"
 	"strconv"
 	"github.com/xumc/host-to-host-file-transport/protocol"
 	"github.com/xumc/host-to-host-file-transport/util"
 )
+
+type upload struct {
+	filePath string
+	total int
+	read int
+}
 
 func Start(serverIP string, serverPort int, filePath string) {
 	serverAddr := serverIP + ":" + strconv.Itoa(serverPort)
@@ -24,8 +32,12 @@ func Start(serverIP string, serverPort int, filePath string) {
 	fileInfo, err := file.Stat()
 	util.CheckErr(err)
 
+	progress := make(chan upload, 10)
+	go update(progress)
+
+
 	if !fileInfo.IsDir() {
-		err = sendFile(conn, fileInfo.Name(), file)
+		err = sendFile(conn, fileInfo.Name(), file, progress)
 		util.CheckErr(err)
 		return
 	}
@@ -38,7 +50,7 @@ func Start(serverIP string, serverPort int, filePath string) {
 			util.CheckErr(err)
 			defer file.Close()
 
-			err = sendFile(conn, path, file)
+			err = sendFile(conn, path, file, progress)
 			util.CheckErr(err)
 			return nil
 		}
@@ -48,13 +60,14 @@ func Start(serverIP string, serverPort int, filePath string) {
 	filepath.Walk(filePath, walk)
 }
 
-func sendFile(conn net.Conn, filePath string, file *os.File) error {
+func sendFile(conn net.Conn, filePath string, file *os.File, progress chan upload) error {
 	fileInfo, err := file.Stat()
 	util.CheckErr(err)
+	fileSize := int(fileInfo.Size())
 
 	conn.Write([]byte(protocol.ConstHeader))
 
-	contentLen := len([]byte(filePath)) + int(fileInfo.Size())
+	contentLen := len([]byte(filePath)) + fileSize
 	conn.Write(protocol.IntToBytes(contentLen))
 
 	filePathBytes := append([]byte(filePath), '\n')
@@ -63,6 +76,9 @@ func sendFile(conn net.Conn, filePath string, file *os.File) error {
 		util.Log(err)
 		return err
 	}
+
+	var totalRead int = 0
+	up := upload{filePath: filePath, total: fileSize,}
 
 	for {
 		buffer := make([]byte, 1024)
@@ -74,8 +90,30 @@ func sendFile(conn net.Conn, filePath string, file *os.File) error {
 			util.Log(err)
 			return err
 		}
-		conn.Write(buffer[:nr])
-	}
 
+		nr, err = conn.Write(buffer[:nr])
+		if err != nil {
+			util.Log(err)
+			return err
+		}
+
+		totalRead += nr
+		up.read = totalRead
+		progress <- up
+
+	}
 	return nil
+}
+
+func update(progress chan upload) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	up := upload{}
+
+	for {
+		select {
+		case up = <- progress:
+		case <-ticker.C:
+			fmt.Printf("\r%s => %d/%d", up.filePath, up.read, up.total)
+		}
+	}
 }
